@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>As Minhas Finanças</title>
+    
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#007bff">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; }
+        
+        .resumo { display: flex; justify-content: space-between; margin-bottom: 25px; }
+        .card { background: #f8f9fa; padding: 15px; border-radius: 8px; width: 30%; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .card h3 { margin: 0 0 10px 0; font-size: 16px; color: #555; }
+        .card p { margin: 0; font-size: 18px; font-weight: bold; }
+        
+        .receita { color: #28a745; }
+        .despesa { color: #dc3545; }
+        
+        .grafico-container { position: relative; height: 280px; width: 100%; margin-bottom: 25px; }
+
+        form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 25px; background: #f8f9fa; padding: 15px; border-radius: 8px; }
+        input, select, button { padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        button:hover { background: #0056b3; }
+        
+        ul { list-style-type: none; padding: 0; }
+        li { display: flex; justify-content: space-between; align-items: center; padding: 12px; background: white; border-bottom: 1px solid #eee; }
+        
+        .categoria-tag { font-size: 12px; background: #e9ecef; color: #495057; padding: 3px 8px; border-radius: 4px; margin-left: 8px; font-weight: 500; text-transform: capitalize; }
+        
+        .btn-apagar { background: #dc3545; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .btn-apagar:hover { background: #c82333; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>A Minha Vida Financeira</h1>
+        
+        <div class="resumo">
+            <div class="card">
+                <h3>Receitas</h3>
+                <p id="total-receitas" class="receita">R$ 0,00</p>
+            </div>
+            <div class="card">
+                <h3>Despesas</h3>
+                <p id="total-despesas" class="despesa">R$ 0,00</p>
+            </div>
+            <div class="card">
+                <h3>Saldo Atual</h3>
+                <p id="saldo-total">R$ 0,00</p>
+            </div>
+        </div>
+
+        <div class="grafico-container">
+            <canvas id="graficoFinancas"></canvas>
+        </div>
+
+        <form id="form-transacao">
+            <input type="text" id="descricao" placeholder="Descrição (ex: Ordenado, Pingo Doce)" required>
+            <input type="number" id="valor" placeholder="Valor (ex: 1500.50)" step="0.01" min="0.01" required>
+            
+            <select id="tipo">
+                <option value="receita">Receita (+)</option>
+                <option value="despesa" selected>Despesa (-)</option>
+            </select>
+
+            <select id="categoria" required></select>
+
+            <button type="submit">Adicionar Transação</button>
+        </form>
+
+        <h3>Histórico</h3>
+        <ul id="lista-transacoes"></ul>
+    </div>
+
+    <script>
+        const form = document.getElementById('form-transacao');
+        const listaTransacoes = document.getElementById('lista-transacoes');
+        const displayReceitas = document.getElementById('total-receitas');
+        const displayDespesas = document.getElementById('total-despesas');
+        const displaySaldo = document.getElementById('saldo-total');
+        const tipoSelect = document.getElementById('tipo');
+        const categoriaSelect = document.getElementById('categoria');
+
+        const categoriasPorTipo = {
+            receita: ['Salário', 'Investimentos', 'Freelance', 'Outros'],
+            despesa: [
+                'Alimentação', 'Lazer', 'Habitação', 'Transporte', 'Saúde', 
+                'Cartão de Crédito', 'Contas da Casa', 'Combustível', 
+                'Despesas com Veículos', 'Outros'
+            ]
+        };
+
+        const coresCategorias = {
+            'alimentação': '#ff9f43', 'lazer': '#ee5253', 'habitação': '#10ac84',
+            'transporte': '#2e86de', 'saúde': '#00d2d3', 'cartão de crédito': '#9b59b6',
+            'contas da casa': '#e67e22', 'combustível': '#f1c40f', 
+            'despesas com veículos': '#34495e', 'outros': '#8395a7'
+        };
+
+        let transacoes = JSON.parse(localStorage.getItem('transacoes')) || [];
+        let meuGrafico;
+
+        function atualizarOpcoesCategoria() {
+            const tipoSelecionado = tipoSelect.value;
+            categoriaSelect.innerHTML = '';
+            
+            categoriasPorTipo[tipoSelecionado].forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat.toLowerCase();
+                option.textContent = cat;
+                categoriaSelect.appendChild(option);
+            });
+        }
+
+        function formatarMoeda(valor) {
+            return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        function atualizarGrafico(resumoDespesas) {
+            const ctx = document.getElementById('graficoFinancas').getContext('2d');
+            
+            if (meuGrafico) meuGrafico.destroy();
+
+            const categoriasExistentes = Object.keys(resumoDespesas);
+
+            if (categoriasExistentes.length === 0) {
+                meuGrafico = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { labels: ['Sem despesas'], datasets: [{ data: [1], backgroundColor: ['#e9ecef'] }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { title: { display: true, text: 'Distribuição das Despesas' } } }
+                });
+                return;
+            }
+
+            const labels = categoriasExistentes.map(cat => cat.charAt(0).toUpperCase() + cat.slice(1));
+            const data = Object.values(resumoDespesas);
+            const backgroundColor = categoriasExistentes.map(cat => coresCategorias[cat] || '#8395a7');
+
+            meuGrafico = new Chart(ctx, {
+                type: 'doughnut',
+                data: { labels: labels, datasets: [{ data: data, backgroundColor: backgroundColor, borderWidth: 2 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Distribuição das Despesas', font: { size: 16 } } } }
+            });
+        }
+
+        function atualizarInterface() {
+            listaTransacoes.innerHTML = '';
+            let totalReceitas = 0, totalDespesas = 0;
+            let resumoDespesas = {}; 
+
+            transacoes.forEach((transacao, index) => {
+                const li = document.createElement('li');
+                const isReceita = transacao.tipo === 'receita';
+                
+                if(isReceita) {
+                    totalReceitas += transacao.valor;
+                } else {
+                    totalDespesas += transacao.valor;
+                    const cat = transacao.categoria || 'outros';
+                    resumoDespesas[cat] = (resumoDespesas[cat] || 0) + transacao.valor;
+                }
+
+                li.innerHTML = `
+                    <div>
+                        <span>${transacao.descricao}</span>
+                        <span class="categoria-tag">${transacao.categoria || 'Outros'}</span>
+                    </div>
+                    <div>
+                        <span class="${isReceita ? 'receita' : 'despesa'}" style="margin-right: 15px; font-weight: bold;">
+                            ${isReceita ? '+' : '-'} ${formatarMoeda(transacao.valor)}
+                        </span>
+                        <button class="btn-apagar" onclick="deletarTransacao(${index})">Apagar</button>
+                    </div>
+                `;
+                listaTransacoes.prepend(li);
+            });
+
+            const saldo = totalReceitas - totalDespesas;
+            displayReceitas.innerText = formatarMoeda(totalReceitas);
+            displayDespesas.innerText = formatarMoeda(totalDespesas);
+            displaySaldo.innerText = formatarMoeda(saldo);
+            displaySaldo.style.color = saldo >= 0 ? '#28a745' : '#dc3545';
+
+            atualizarGrafico(resumoDespesas);
+        }
+
+        function adicionarTransacao(evento) {
+            evento.preventDefault();
+            const descricao = document.getElementById('descricao').value;
+            const valor = parseFloat(document.getElementById('valor').value);
+            const tipo = document.getElementById('tipo').value;
+            const categoria = document.getElementById('categoria').value;
+
+            transacoes.push({ descricao, valor, tipo, categoria });
+            salvarDados();
+            atualizarInterface();
+            form.reset();
+            atualizarOpcoesCategoria();
+        }
+
+        function deletarTransacao(index) {
+            transacoes.splice(index, 1);
+            salvarDados();
+            atualizarInterface();
+        }
+
+        function salvarDados() { localStorage.setItem('transacoes', JSON.stringify(transacoes)); }
+
+        tipoSelect.addEventListener('change', atualizarOpcoesCategoria);
+        form.addEventListener('submit', adicionarTransacao);
+
+        atualizarOpcoesCategoria();
+        atualizarInterface();
+    </script>
+
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('Service Worker registado com sucesso!'))
+            .catch(err => console.error('Erro ao registar o Service Worker:', err));
+        });
+      }
+    </script>
+    </body>
+</html>
